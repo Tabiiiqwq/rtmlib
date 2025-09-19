@@ -1,3 +1,24 @@
+
+## setup
+```bash
+pip install onnxruntime-gpu
+pip install -e . 
+```
+
+## How to use
+To process a single video, run:
+```python
+python get_2dpose_RTMW.py --video_path ./test_video.mp4 --output_dir ./output/RTMW --extract_mode balanced --device cuda
+``` 
+
+## TODO
+- Sort bbox by confidence score
+- Return the bbox from det model
+
+
+---
+# Original README
+
 # rtmlib
 
 ![demo](https://github.com/Tau-J/rtmlib/assets/13503330/b7e8ce8b-3134-43cf-bba6-d81656897289)
