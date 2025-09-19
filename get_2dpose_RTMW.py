@@ -4,7 +4,8 @@ import cv2
 import json
 import numpy as np
 import fire
-
+import threading
+from queue import Queue
 from tqdm import tqdm
 from pathlib import Path
 from typing import List, Tuple, Dict
@@ -52,6 +53,37 @@ def process_images(
     results = np.array(results)  # Convert list to numpy array, (frame, person, 133, 3)
     return results
 
+def read_frames_threaded(video_path, max_workers=4):
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    frame_queue = Queue(maxsize=100)
+    images = []
+    
+    def frame_reader():
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                frame_queue.put(None)
+                break
+            frame_queue.put(frame.copy())
+    
+    reader_thread = threading.Thread(target=frame_reader)
+    reader_thread.start()
+    
+    print(f"Reading {total_frames} frames from video...")
+    with tqdm(total=total_frames, desc="Reading video frames") as pbar:
+        while True:
+            frame = frame_queue.get()
+            if frame is None:
+                break
+            images.append(frame)
+            pbar.update(1)
+    
+    reader_thread.join()
+    cap.release()
+    return images
+
 
 def get_bbox_from_keypoints(
     keypoints: np.ndarray, score_thr: float = 0.5
@@ -82,14 +114,16 @@ def get_npy_results(results: np.ndarray, images: List[np.ndarray]) -> np.array:
     return npy_results
 
 
-def get_json_results(results: np.ndarray) -> List:  # return (frame, person, dict)
+def get_json_results(results: np.ndarray, images: List[np.ndarray]) -> List:  # return (frame, person, dict)
     json_results = []
+    H, W = images[0].shape[:2]
     for frame in results:
         frame_results = []
         for i, person in enumerate(frame):
             bbox = get_bbox_from_keypoints(person, score_thr=0.5)  # xyxy
             person_dict = {
                 "personID": i,
+                "video_resolution": [W, H],
                 "bbox": bbox,  # xyxy
                 "keypoints": person.tolist(),  # (133, 3)
                 "isKeyFrame": False,
@@ -124,17 +158,7 @@ def main(
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         # Read all frames into a list
-        images = []
-        print(f"Reading {total_frames} frames from video...")
-        with tqdm(total=total_frames, desc="Reading video frames") as pbar:
-            while True:
-                ret, image = cap.read()
-                if not ret:
-                    break
-                images.append(image)
-                pbar.update(1)
-
-        cap.release()
+        images = read_frames_threaded(video_path)
 
         # Process all images using the extracted function
         results = process_images(images, wholebody, output_dir, vis)
@@ -154,7 +178,7 @@ def main(
                 os.path.basename(video_path).replace(video_extension, ".json"),
             )
             Path(output_dir).mkdir(parents=True, exist_ok=True)
-            json_results = get_json_results(results)
+            json_results = get_json_results(results, images)
             with open(json_out_path, "w") as f:
                 json.dump(json_results, f)
 
