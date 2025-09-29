@@ -106,10 +106,12 @@ class Wholebody:
                                   device=device)
 
     def __call__(self, image: np.ndarray):
-        bboxes = self.det_model(image)
+        bboxes, bbox_scores = self.det_model(image) # people, 4 and people, 1
+        # Convert numpy array to list for RTMPose compatibility
+        bboxes = bboxes.tolist() if len(bboxes) > 0 else []
         keypoints, scores = self.pose_model(image, bboxes=bboxes)
 
-        return keypoints, scores
+        return keypoints, scores, bbox_scores
 
     @staticmethod
     def format_result(keypoints_info: np.ndarray) -> List[PoseResult]:

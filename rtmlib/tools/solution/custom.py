@@ -113,7 +113,9 @@ class Custom:
         if self.one_stage:
             keypoints, scores = self.pose_model(image)
         else:
-            bboxes = self.det_model(image)
+            bboxes, _ = self.det_model(image) 
+            # Convert numpy array to list for RTMPose compatibility
+            bboxes = bboxes.tolist() if len(bboxes) > 0 else []
             keypoints, scores = self.pose_model(image, bboxes=bboxes)
 
         return keypoints, scores
