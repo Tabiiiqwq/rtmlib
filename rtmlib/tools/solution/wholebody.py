@@ -111,7 +111,7 @@ class Wholebody:
         bboxes = bboxes.tolist() if len(bboxes) > 0 else []
         keypoints, scores = self.pose_model(image, bboxes=bboxes)
 
-        return keypoints, scores, bbox_scores
+        return keypoints, scores, bboxes, bbox_scores
 
     @staticmethod
     def format_result(keypoints_info: np.ndarray) -> List[PoseResult]:

@@ -10,12 +10,12 @@ from tqdm import tqdm
 from pathlib import Path
 from typing import List, Tuple, Dict
 
-from rtmlib import Wholebody, draw_skeleton
+from rtmlib import Wholebody, draw_skeleton, draw_bbox
 
 
 def process_images(
     images: List[np.ndarray], wholebody_model, output_dir: str, vis: bool = True
-) -> np.ndarray:
+) -> List[np.ndarray]:
     """
     Process a list of images and return raw model outputs.
 
@@ -31,14 +31,24 @@ def process_images(
     results = []
 
     for frame_idx, image in enumerate(tqdm(images, desc="Processing images")):
-        keypoints, scores_raw = wholebody_model(image)
+        keypoints, scores_raw, bbox, bbox_scores_raw = wholebody_model(image)
 
         scores = scores_raw[:, :, np.newaxis]  # (num_person, 133, 1)
         out_data = np.concatenate([keypoints, scores], axis=-1)  # (num_person, 133, 3)
 
+        bbox_out = np.concatenate([bbox, bbox_scores_raw[:, np.newaxis]], axis=-1)  # (num_person, 5)
+        
+        # Sort by bbox confidence score (descending order)
+        if len(bbox_out) > 0:
+            sort_indices = np.argsort(bbox_scores_raw)[::-1]  # descending order
+            bbox_out = bbox_out[sort_indices]
+            out_data = out_data[sort_indices]
+
         if vis:
+            vis_bbox = draw_bbox(image, bbox_out)
+            
             vis_out = draw_skeleton(
-                image, keypoints, scores_raw, kpt_thr=0.5, radius=1, line_width=1
+                vis_bbox, keypoints, scores_raw, kpt_thr=0.5, radius=1, line_width=1
             )
             vis_out_path = os.path.join(
                 output_dir, "vis_RTMW", f"pose_{frame_idx:05d}.jpg"
@@ -50,8 +60,8 @@ def process_images(
 
         results.append(out_data)
 
-    results = np.array(results)  # Convert list to numpy array, (frame, person, 133, 3)
-    return results
+    # results = np.array(results)  # Convert list to numpy array, (frame, person, 133, 3)
+    return results, bbox_out
 
 def read_frames_threaded(video_path, max_workers=4):
     cap = cv2.VideoCapture(video_path)
@@ -101,7 +111,7 @@ def get_bbox_from_keypoints(
     return bbox
 
 
-def get_npy_results(results: np.ndarray, images: List[np.ndarray]) -> np.array:
+def get_npy_results(results: List[np.ndarray], images: List[np.ndarray]) -> np.array:
     # get video resolution
     H, W = images[0].shape[:2]
     video_res_info = np.array([W, H, 1], dtype=np.int32)  # (3,)
@@ -114,7 +124,7 @@ def get_npy_results(results: np.ndarray, images: List[np.ndarray]) -> np.array:
     return npy_results
 
 
-def get_json_results(results: np.ndarray, images: List[np.ndarray]) -> List:  # return (frame, person, dict)
+def get_json_results(results: List[np.ndarray], images: List[np.ndarray], bboxes_raw) -> List:  # return (frame, person, dict)
     json_results = []
     H, W = images[0].shape[:2]
     for frame in results:
@@ -124,7 +134,8 @@ def get_json_results(results: np.ndarray, images: List[np.ndarray]) -> List:  # 
             person_dict = {
                 "personID": i,
                 "video_resolution": [W, H],
-                "bbox": bbox,  # xyxy
+                "bbox": bbox,  # xyxy,
+                "bbox_confidence": bboxes_raw[i][4] if len(bboxes_raw) > i else 0.0,
                 "keypoints": person.tolist(),  # (133, 3)
                 "isKeyFrame": False,
             }
@@ -161,7 +172,7 @@ def main(
         images = read_frames_threaded(video_path)
 
         # Process all images using the extracted function
-        results = process_images(images, wholebody, output_dir, vis)
+        results, bboxes = process_images(images, wholebody, output_dir, vis)
         if save_mode == "npy":
             npy_out_path = os.path.join(
                 output_dir,
@@ -178,7 +189,7 @@ def main(
                 os.path.basename(video_path).replace(video_extension, ".json"),
             )
             Path(output_dir).mkdir(parents=True, exist_ok=True)
-            json_results = get_json_results(results, images)
+            json_results = get_json_results(results, images, bboxes)
             with open(json_out_path, "w") as f:
                 json.dump(json_results, f)
 
