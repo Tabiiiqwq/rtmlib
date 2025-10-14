@@ -105,14 +105,17 @@ class Wholebody:
                                   backend=backend,
                                   device=device)
 
-    def __call__(self, image: np.ndarray, bboxes_input: list = None):
+    def __call__(self, image: np.ndarray, bboxes_input: np.ndarray = None): # bboxes_input: [num_people, 5] xyxyc
         if bboxes_input is not None:
-            bboxes = bboxes_input
+            bboxes = bboxes_input[:, :4]
+            bbox_scores = bboxes_input[:, 4:].squeeze()
         else:
-            bboxes = self.det_model(image)
+            bboxes, bbox_scores = self.det_model(image) # people, 4 and people, 1
+        # Convert numpy array to list for RTMPose compatibility
+        bboxes = bboxes.tolist() if len(bboxes) > 0 else []
         keypoints, scores = self.pose_model(image, bboxes=bboxes)
 
-        return keypoints, scores, bboxes
+        return keypoints, scores, bboxes, bbox_scores
 
     @staticmethod
     def format_result(keypoints_info: np.ndarray) -> List[PoseResult]:

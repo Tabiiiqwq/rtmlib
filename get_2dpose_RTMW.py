@@ -10,12 +10,12 @@ from tqdm import tqdm
 from pathlib import Path
 from typing import List, Tuple, Dict
 
-from rtmlib import Wholebody, draw_skeleton
+from rtmlib import Wholebody, draw_skeleton, draw_bbox
 
 
 def process_images(
     images: List[np.ndarray], wholebody_model, output_dir: str, vis: bool = True
-) -> np.ndarray:
+) -> List[np.ndarray]:
     """
     Process a list of images and return raw model outputs.
 
@@ -29,16 +29,31 @@ def process_images(
         List of dictionaries containing keypoints data for each image
     """
     results = []
+    bbox_out = np.array([]).reshape(0, 5)  # Initialize as empty array with correct shape
 
     for frame_idx, image in enumerate(tqdm(images, desc="Processing images")):
-        keypoints, scores_raw = wholebody_model(image)
+        keypoints, scores_raw, bbox, bbox_scores_raw = wholebody_model(image)
 
         scores = scores_raw[:, :, np.newaxis]  # (num_person, 133, 1)
         out_data = np.concatenate([keypoints, scores], axis=-1)  # (num_person, 133, 3)
 
+        if len(bbox) == 0 and (len(bbox_scores_raw) == 0):
+            bbox = np.array([0, 0, 0, 0]).reshape(1, 4)  # dummy bbox
+            bbox_scores_raw = np.array([0.0]).reshape(1,)  # dummy score
+
+        bbox_out = np.concatenate([bbox, bbox_scores_raw[:, np.newaxis]], axis=-1)  # (num_person, 5)
+        
+        # Sort by bbox confidence score (descending order)
+        if len(bbox_out) > 0:
+            sort_indices = np.argsort(bbox_scores_raw)[::-1]  # descending order
+            bbox_out = bbox_out[sort_indices]
+            out_data = out_data[sort_indices]
+
         if vis:
+            vis_bbox = draw_bbox(image, bbox_out)
+            
             vis_out = draw_skeleton(
-                image, keypoints, scores_raw, kpt_thr=0.5, radius=1, line_width=1
+                vis_bbox, keypoints, scores_raw, kpt_thr=0.5, radius=1, line_width=1
             )
             vis_out_path = os.path.join(
                 output_dir, "vis_RTMW", f"pose_{frame_idx:05d}.jpg"
@@ -50,8 +65,8 @@ def process_images(
 
         results.append(out_data)
 
-    results = np.array(results)  # Convert list to numpy array, (frame, person, 133, 3)
-    return results
+    # results = np.array(results)  # Convert list to numpy array, (frame, person, 133, 3)
+    return results, bbox_out
 
 def read_frames_threaded(video_path, max_workers=4):
     cap = cv2.VideoCapture(video_path)
@@ -101,7 +116,9 @@ def get_bbox_from_keypoints(
     return bbox
 
 
-def get_npy_results(results: np.ndarray, images: List[np.ndarray]) -> np.array:
+def get_npy_results(results: List[np.ndarray], images: List[np.ndarray]) -> np.array:
+    if not images:
+        return np.array([]).reshape(0, 134, 3)
     # get video resolution
     H, W = images[0].shape[:2]
     video_res_info = np.array([W, H, 1], dtype=np.int32)  # (3,)
@@ -114,8 +131,10 @@ def get_npy_results(results: np.ndarray, images: List[np.ndarray]) -> np.array:
     return npy_results
 
 
-def get_json_results(results: np.ndarray, images: List[np.ndarray]) -> List:  # return (frame, person, dict)
+def get_json_results(results: List[np.ndarray], images: List[np.ndarray], bboxes_raw) -> List:  # return (frame, person, dict)
     json_results = []
+    if not images:
+        return json_results
     H, W = images[0].shape[:2]
     for frame in results:
         frame_results = []
@@ -124,7 +143,8 @@ def get_json_results(results: np.ndarray, images: List[np.ndarray]) -> List:  # 
             person_dict = {
                 "personID": i,
                 "video_resolution": [W, H],
-                "bbox": bbox,  # xyxy
+                "bbox": bbox,  # xyxy,
+                "bbox_confidence": bboxes_raw[i][4] if len(bboxes_raw) > i else 0.0,
                 "keypoints": person.tolist(),  # (133, 3)
                 "isKeyFrame": False,
             }
@@ -132,23 +152,40 @@ def get_json_results(results: np.ndarray, images: List[np.ndarray]) -> List:  # 
         json_results.append(frame_results)
     return json_results
 
+def run_from_json(video_path_json: str, wholebody_model): # for dg data processing
+    with open(video_path_json, "r") as f:
+        video_list = json.load(f)
 
-def main(
+    for video_path in tqdm(video_list):
+        output_path = video_path.replace('videos', 'json_rtwm').replace('.mp4', '.json')
+        if os.path.exists(output_path):
+            print(f"Skip existing: {output_path}")
+            continue
+        print(video_path, '->', output_path)
+        run(video_path=video_path, output_dir=os.path.dirname(output_path), wholebody_model=wholebody_model)
+        
+
+
+def run(
     video_path: str = "./test_video.mp4",  # video file path
     output_dir: str = "./output/RTMW",
     extract_mode: str = "balanced",  # 'performance', 'lightweight', 'balanced'
     save_mode: str = "json",  # 'json', 'npy': json follow red_output.json, npy follow trainning data format
     device: str = "cuda",  # cpu, cuda, mps
     vis: bool = False,
+    wholebody_model: str = None,
 ):
-    backend = "onnxruntime"  # opencv, onnxruntime, openvino
-    openpose_skeleton = False  # True for openpose-style, False for mmpose-style
-    wholebody = Wholebody(
-        to_openpose=openpose_skeleton,
-        mode=extract_mode,  # 'performance', 'lightweight', 'balanced'. Default: 'balanced'
-        backend=backend,
-        device=device,
-    )
+    if wholebody_model is None:
+        backend = "onnxruntime"  # opencv, onnxruntime, openvino
+        openpose_skeleton = False  # True for openpose-style, False for mmpose-style
+        wholebody = Wholebody(
+            to_openpose=openpose_skeleton,
+            mode=extract_mode,  # 'performance', 'lightweight', 'balanced'. Default: 'balanced'
+            backend=backend,
+            device=device,
+        )
+    else:
+        wholebody = wholebody_model
 
     video_extension = os.path.splitext(video_path)[1]  # get file extension
 
@@ -161,7 +198,7 @@ def main(
         images = read_frames_threaded(video_path)
 
         # Process all images using the extracted function
-        results = process_images(images, wholebody, output_dir, vis)
+        results, bboxes = process_images(images, wholebody, output_dir, vis)
         if save_mode == "npy":
             npy_out_path = os.path.join(
                 output_dir,
@@ -178,10 +215,52 @@ def main(
                 os.path.basename(video_path).replace(video_extension, ".json"),
             )
             Path(output_dir).mkdir(parents=True, exist_ok=True)
-            json_results = get_json_results(results, images)
+            json_results = get_json_results(results, images, bboxes)
             with open(json_out_path, "w") as f:
                 json.dump(json_results, f)
+                
+    elif os.path.isdir(video_path):
+        # Process all video files in the directory
+        video_list = glob.glob(os.path.join(video_path, "**", "*.mp4"), recursive=True)
+        print(f"Found {len(video_list)} video files in {video_path}")
+
+        for video_path in video_list:
+            # Read all frames into a list
+            images = read_frames_threaded(video_path)
+
+            # Process all images using the extracted function
+            results, bboxes = process_images(images, wholebody, output_dir, vis)
+            if save_mode == "npy":
+                npy_out_path = os.path.join(
+                    output_dir,
+                    os.path.basename(video_path).replace(video_extension, ".npy"),
+                )
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+                npy_results = get_npy_results(results, images)
+
+                np.save(npy_out_path, npy_results)
+            elif save_mode == "json":
+                json_out_path = os.path.join(
+                    output_dir,
+                    os.path.basename(video_path).replace(video_extension, ".json"),
+                )
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+                json_results = get_json_results(results, images, bboxes)
+                with open(json_out_path, "w") as f:
+                    json.dump(json_results, f)
+                    
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    fire.Fire(run)
+    # backend = "onnxruntime"  # opencv, onnxruntime, openvino
+    # openpose_skeleton = False  # True for openpose-style, False for mmpose-style
+    # wholebody = Wholebody(
+    #     to_openpose=openpose_skeleton,
+    #     mode='balanced',  # 'performance', 'lightweight', 'balanced'. Default: 'balanced'
+    #     backend=backend,
+    #     device='cuda',
+    #     )
+    # run_from_json(r"E:\rensh\SignLang\sign_database\missing_videos.json", wholebody_model=wholebody)
+    

@@ -27,8 +27,8 @@ class YOLOX(BaseTool):
     def __call__(self, image: np.ndarray):
         image, ratio = self.preprocess(image)
         outputs = self.inference(image)[0]
-        results = self.postprocess(outputs, ratio)
-        return results
+        bboxes, scores = self.postprocess(outputs, ratio)
+        return bboxes, scores
 
     def preprocess(self, img: np.ndarray):
         """Do preprocessing for RTMPose model inference.
@@ -121,6 +121,10 @@ class YOLOX(BaseTool):
                 iscat = final_cls_inds == 0
                 isbbox = [i and j for (i, j) in zip(isscore, iscat)]
                 final_boxes = final_boxes[isbbox]
+                final_scores = final_scores[isbbox]
+            else:
+                final_boxes = np.array([]).reshape(0, 4)
+                final_scores = np.array([])
 
         elif outputs.shape[-1] == 5:
             # onnx contains nms module
@@ -131,5 +135,6 @@ class YOLOX(BaseTool):
             isscore = final_scores > 0.3
             isbbox = [i for i in isscore]
             final_boxes = final_boxes[isbbox]
+            final_scores = final_scores[isbbox]
 
-        return final_boxes
+        return final_boxes, final_scores

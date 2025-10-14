@@ -14,6 +14,8 @@ class RTMDet(BaseTool):
                  model_input_size: tuple = (640, 640),
                  mean: tuple = (103.5300, 116.2800, 123.6750),
                  std: tuple = (57.3750, 57.1200, 58.3950),
+                 nms_thr=0.45,
+                 score_thr=0.7,
                  backend: str = 'onnxruntime',
                  device: str = 'cpu'):
         super().__init__(onnx_model,
@@ -22,13 +24,15 @@ class RTMDet(BaseTool):
                          std,
                          backend=backend,
                          device=device)
+        self.nms_thr = nms_thr
+        self.score_thr = score_thr
 
     def __call__(self, image: np.ndarray):
         image, ratio = self.preprocess(image)
         outputs = self.inference(image)[0]
         # print(len(outputs))
-        results = self.postprocess(outputs, ratio)
-        return results
+        bboxes, scores = self.postprocess(outputs, ratio)
+        return bboxes, scores
 
     def preprocess(self, img: np.ndarray):
         """Do preprocessing for RTMPose model inference.
@@ -127,6 +131,10 @@ class RTMDet(BaseTool):
                 iscat = final_cls_inds == 0
                 isbbox = [i and j for (i, j) in zip(isscore, iscat)]
                 final_boxes = final_boxes[isbbox]
+                final_scores = final_scores[isbbox]
+            else:
+                final_boxes = np.array([]).reshape(0, 4)
+                final_scores = np.array([])
 
         elif outputs.shape[-1] == 5:
             # onnx contains nms module
@@ -137,5 +145,6 @@ class RTMDet(BaseTool):
             isscore = final_scores > 0.3
             isbbox = [i for i in isscore]
             final_boxes = final_boxes[isbbox]
+            final_scores = final_scores[isbbox]
 
-        return final_boxes
+        return final_boxes, final_scores
