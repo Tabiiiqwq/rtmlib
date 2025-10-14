@@ -105,11 +105,14 @@ class Wholebody:
                                   backend=backend,
                                   device=device)
 
-    def __call__(self, image: np.ndarray):
-        bboxes = self.det_model(image)
+    def __call__(self, image: np.ndarray, bboxes_input: list = None):
+        if bboxes_input is not None:
+            bboxes = bboxes_input
+        else:
+            bboxes = self.det_model(image)
         keypoints, scores = self.pose_model(image, bboxes=bboxes)
 
-        return keypoints, scores
+        return keypoints, scores, bboxes
 
     @staticmethod
     def format_result(keypoints_info: np.ndarray) -> List[PoseResult]:
