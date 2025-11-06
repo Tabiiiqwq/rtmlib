@@ -60,7 +60,12 @@ class BaseTool(metaclass=ABCMeta):
 
         elif backend == 'onnxruntime':
             import onnxruntime as ort
-            providers = RTMLIB_SETTINGS[backend][device]
+            # 'cuda:device_id'
+            if (device not in RTMLIB_SETTINGS[backend]) and ("cuda" in device):
+                device_id = int(device.split(":")[-1])
+                providers = ('CUDAExecutionProvider', {'device_id': device_id})
+            else:
+                providers = RTMLIB_SETTINGS[backend][device]
 
             # setup cuda device
             if device == "cuda":
@@ -73,7 +78,7 @@ class BaseTool(metaclass=ABCMeta):
                                                 providers=[providers])
 
         elif backend == 'openvino':
-            from openvino.runtime import Core
+            from openvino import Core
             core = Core()
             model_onnx = core.read_model(model=onnx_model)
 
