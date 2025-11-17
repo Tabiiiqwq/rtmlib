@@ -63,7 +63,7 @@ class BaseTool(metaclass=ABCMeta):
             # 'cuda:device_id'
             if (device not in RTMLIB_SETTINGS[backend]) and ("cuda" in device):
                 device_id = int(device.split(":")[-1])
-                providers = ('CUDAExecutionProvider', {'device_id': device_id})
+                providers = 'CUDAExecutionProvider'
             else:
                 providers = RTMLIB_SETTINGS[backend][device]
 
