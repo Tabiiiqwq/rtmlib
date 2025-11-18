@@ -1,266 +1,121 @@
 import os
-import glob
 import cv2
 import json
 import numpy as np
 import fire
-import threading
-from queue import Queue
 from tqdm import tqdm
 from pathlib import Path
 from typing import List, Tuple, Dict
 
-from rtmlib import Wholebody, draw_skeleton, draw_bbox
+from rtmlib import Wholebody, draw_skeleton
 
 
-def process_images(
-    images: List[np.ndarray], wholebody_model, output_dir: str, vis: bool = True
-) -> List[np.ndarray]:
-    """
-    Process a list of images and return raw model outputs.
+def process_single_frame(frame, wholebody_model):
+    """处理单帧图像，返回关键点和边界框"""
+    keypoints, scores_raw, bbox, bbox_scores_raw = wholebody_model(frame)
 
-    Args:
-        images: List of images as numpy arrays
-        wholebody_model: Initialized Wholebody model
-        output_dir: Directory to save results
-        vis: Whether to save visualization results
+    if bbox is None or len(bbox) == 0:
+        return None, None, None, None
 
-    Returns:
-        List of dictionaries containing keypoints data for each image
-    """
-    results = []
-    bbox_out = np.array([]).reshape(0, 5)  # Initialize as empty array with correct shape
-
-    for frame_idx, image in enumerate(tqdm(images, desc="Processing images")):
-        keypoints, scores_raw, bbox, bbox_scores_raw = wholebody_model(image)
-
-        scores = scores_raw[:, :, np.newaxis]  # (num_person, 133, 1)
-        out_data = np.concatenate([keypoints, scores], axis=-1)  # (num_person, 133, 3)
-
-        if len(bbox) == 0 and (len(bbox_scores_raw) == 0):
-            bbox = np.array([0, 0, 0, 0]).reshape(1, 4)  # dummy bbox
-            bbox_scores_raw = np.array([0.0]).reshape(1,)  # dummy score
-
-        bbox_out = np.concatenate([bbox, bbox_scores_raw[:, np.newaxis]], axis=-1)  # (num_person, 5)
-        
-        # Sort by bbox confidence score (descending order)
-        if len(bbox_out) > 0:
-            sort_indices = np.argsort(bbox_scores_raw)[::-1]  # descending order
-            bbox_out = bbox_out[sort_indices]
-            out_data = out_data[sort_indices]
-
-        if vis:
-            vis_bbox = draw_bbox(image, bbox_out)
-            
-            vis_out = draw_skeleton(
-                vis_bbox, keypoints, scores_raw, kpt_thr=0.5, radius=1, line_width=1
-            )
-            vis_out_path = os.path.join(
-                output_dir, "vis_RTMW", f"pose_{frame_idx:05d}.jpg"
-            )
-            Path(os.path.join(output_dir, "vis_RTMW")).mkdir(
-                parents=True, exist_ok=True
-            )
-            cv2.imwrite(vis_out_path, vis_out)
-
-        results.append(out_data)
-
-    # results = np.array(results)  # Convert list to numpy array, (frame, person, 133, 3)
-    return results, bbox_out
-
-def read_frames_threaded(video_path, max_workers=4):
-    cap = cv2.VideoCapture(video_path)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    bbox = np.asarray(bbox)
+    if len(bbox) > 1:
+        widths = np.maximum(0, bbox[:, 2] - bbox[:, 0])
+        heights = np.maximum(0, bbox[:, 3] - bbox[:, 1])
+        areas = widths * heights
+        max_idx = int(np.argmax(areas))
+        keypoints, scores_raw, bbox, bbox_scores_raw = keypoints[[max_idx]], scores_raw[[max_idx]], bbox[[max_idx]], bbox_scores_raw[[max_idx]]
     
-    frame_queue = Queue(maxsize=100)
-    images = []
-    
-    def frame_reader():
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                frame_queue.put(None)
-                break
-            frame_queue.put(frame.copy())
-    
-    reader_thread = threading.Thread(target=frame_reader)
-    reader_thread.start()
-    
-    print(f"Reading {total_frames} frames from video...")
-    with tqdm(total=total_frames, desc="Reading video frames") as pbar:
-        while True:
-            frame = frame_queue.get()
-            if frame is None:
-                break
-            images.append(frame)
-            pbar.update(1)
-    
-    reader_thread.join()
-    cap.release()
-    return images
+    return keypoints, scores_raw, bbox, bbox_scores_raw
 
 
-def get_bbox_from_keypoints(
-    keypoints: np.ndarray, score_thr: float = 0.5
-) -> List[int]:  # xyxy
+def get_bbox_from_keypoints(keypoints: np.ndarray, score_thr: float = 0.5) -> List[int]:
     assert keypoints.shape == (133, 3)
     valid_kpts = keypoints[keypoints[:, 2] > score_thr]
     if valid_kpts.shape[0] > 0:
-        x_min = int(np.min(valid_kpts[:, 0]))
-        y_min = int(np.min(valid_kpts[:, 1]))
-        x_max = int(np.max(valid_kpts[:, 0]))
-        y_max = int(np.max(valid_kpts[:, 1]))
-        bbox = [x_min, y_min, x_max, y_max]
-    else:
-        bbox = [0, 0, 0, 0]  # dummy bbox
-    return bbox
-
-
-def get_npy_results(results: List[np.ndarray], images: List[np.ndarray]) -> np.array:
-    if not images:
-        return np.array([]).reshape(0, 134, 3)
-    # get video resolution
-    H, W = images[0].shape[:2]
-    video_res_info = np.array([W, H, 1], dtype=np.int32)  # (3,)
-    video_res_info = np.tile(video_res_info, (results.shape[0], 1, 1))  # (frame, 1, 3)
-
-    npy_results = results[:, 0, :, :]  # (frame, 133, 3)
-    npy_results = np.concatenate(
-        [npy_results, video_res_info], axis=1
-    )  # (frame, 134, 3)
-    return npy_results
-
-
-def get_json_results(results: List[np.ndarray], images: List[np.ndarray], bboxes_raw) -> List:  # return (frame, person, dict)
-    json_results = []
-    if not images:
-        return json_results
-    H, W = images[0].shape[:2]
-    for frame in results:
-        frame_results = []
-        for i, person in enumerate(frame):
-            bbox = get_bbox_from_keypoints(person, score_thr=0.5)  # xyxy
-            person_dict = {
-                "personID": i,
-                "video_resolution": [W, H],
-                "bbox": bbox,  # xyxy,
-                "bbox_confidence": bboxes_raw[i][4] if len(bboxes_raw) > i else 0.0,
-                "keypoints": person.tolist(),  # (133, 3)
-                "isKeyFrame": False,
-            }
-            frame_results.append(person_dict)
-        json_results.append(frame_results)
-    return json_results
-
-def run_from_json(video_path_json: str, wholebody_model): # for dg data processing
-    with open(video_path_json, "r") as f:
-        video_list = json.load(f)
-
-    for video_path in tqdm(video_list):
-        output_path = video_path.replace('videos', 'json_rtwm').replace('.mp4', '.json')
-        if os.path.exists(output_path):
-            print(f"Skip existing: {output_path}")
-            continue
-        print(video_path, '->', output_path)
-        run(video_path=video_path, output_dir=os.path.dirname(output_path), wholebody_model=wholebody_model)
-        
+        x_min, y_min = int(np.min(valid_kpts[:, 0])), int(np.min(valid_kpts[:, 1]))
+        x_max, y_max = int(np.max(valid_kpts[:, 0])), int(np.max(valid_kpts[:, 1]))
+        return [x_min, y_min, x_max, y_max]
+    return [0, 0, 0, 0]
 
 
 def run(
-    video_path: str = "./test_video.mp4",  # video file path
+    video_path: str = "./test_video.mp4",
     output_dir: str = "./output/RTMW",
-    extract_mode: str = "balanced",  # 'performance', 'lightweight', 'balanced'
-    save_mode: str = "json",  # 'json', 'npy': json follow red_output.json, npy follow trainning data format
-    device: str = "cuda",  # cpu, cuda, mps
-    vis: bool = False,
-    wholebody_model: str = None,
+    extract_mode: str = "balanced",
+    save_mode: str = "json",
+    device: str = "cpu",
+    vis: bool = True,
+    wholebody_model=None,
 ):
     if wholebody_model is None:
-        backend = "onnxruntime"  # opencv, onnxruntime, openvino
-        openpose_skeleton = False  # True for openpose-style, False for mmpose-style
-        wholebody = Wholebody(
-            to_openpose=openpose_skeleton,
-            mode=extract_mode,  # 'performance', 'lightweight', 'balanced'. Default: 'balanced'
-            backend=backend,
-            device=device,
+        print(f"Initializing model with device: {device}...")
+        wholebody_model = Wholebody(
+            to_openpose=False, mode=extract_mode, backend="onnxruntime", device=device
         )
-    else:
-        wholebody = wholebody_model
+    
+    vis_folder = os.path.join(output_dir, "visualized_frames")
+    os.makedirs(vis_folder, exist_ok=True)
+    
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Could not open video {video_path}")
+        return
 
-    video_extension = os.path.splitext(video_path)[1]  # get file extension
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    
+    all_frames_data = []
 
-    if os.path.isfile(video_path):
-        # Process video file
-        cap = cv2.VideoCapture(video_path)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # 使用tqdm创建进度条
+    with tqdm(total=total_frames, desc="Processing video frame-by-frame") as pbar:
+        frame_idx = 0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        # Read all frames into a list
-        images = read_frames_threaded(video_path)
+            keypoints, scores_raw, bbox, bbox_scores_raw = process_single_frame(frame, wholebody_model)
 
-        # Process all images using the extracted function
-        results, bboxes = process_images(images, wholebody, output_dir, vis)
-        if save_mode == "npy":
-            npy_out_path = os.path.join(
-                output_dir,
-                os.path.basename(video_path).replace(video_extension, ".npy"),
-            )
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-            npy_results = get_npy_results(results, images)
-
-            np.save(npy_out_path, npy_results)
-        elif save_mode == "json":
-            json_out_path = os.path.join(
-                output_dir,
-                os.path.basename(video_path).replace(video_extension, ".json"),
-            )
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
-            json_results = get_json_results(results, images, bboxes)
-            with open(json_out_path, "w") as f:
-                json.dump(json_results, f)
+            frame_results = []
+            if keypoints is not None:
+                scores = scores_raw[:, :, np.newaxis]
+                out_data = np.concatenate([keypoints, scores], axis=-1)[0]
                 
-    elif os.path.isdir(video_path):
-        # Process all video files in the directory
-        video_list = glob.glob(os.path.join(video_path, "**", "*.mp4"), recursive=True)
-        print(f"Found {len(video_list)} video files in {video_path}")
+                bbox_out = np.concatenate([bbox, bbox_scores_raw[:, np.newaxis]], axis=-1)
+                bbox_conf = bbox_out[0, 4] if bbox_out.shape[0] > 0 else 0.0
 
-        for video_path in video_list:
-            # Read all frames into a list
-            images = read_frames_threaded(video_path)
+                person_dict = {
+                    "personID": 0,
+                    "video_resolution": [W, H],
+                    "bbox": get_bbox_from_keypoints(out_data, score_thr=0.5),
+                    "bbox_confidence": bbox_conf,
+                    "keypoints": out_data.tolist(),
+                    "isKeyFrame": False,
+                }
+                frame_results.append(person_dict)
+                
+                if vis:
+                    vis_img = draw_skeleton(frame, keypoints, scores_raw, kpt_thr=0.5, radius=2, line_width=2)
+                    vis_out_path = os.path.join(vis_folder, f"frame_{frame_idx:06d}.jpg")
+                    cv2.imwrite(vis_out_path, vis_img)
+            elif vis: # 如果没有检测到目标，也保存原图
+                vis_out_path = os.path.join(vis_folder, f"frame_{frame_idx:06d}.jpg")
+                cv2.imwrite(vis_out_path, frame)
 
-            # Process all images using the extracted function
-            results, bboxes = process_images(images, wholebody, output_dir, vis)
-            if save_mode == "npy":
-                npy_out_path = os.path.join(
-                    output_dir,
-                    os.path.basename(video_path).replace(video_extension, ".npy"),
-                )
-                Path(output_dir).mkdir(parents=True, exist_ok=True)
+            all_frames_data.append(frame_results)
+            pbar.update(1)
+            frame_idx += 1
+            
+    cap.release()
 
-                npy_results = get_npy_results(results, images)
-
-                np.save(npy_out_path, npy_results)
-            elif save_mode == "json":
-                json_out_path = os.path.join(
-                    output_dir,
-                    os.path.basename(video_path).replace(video_extension, ".json"),
-                )
-                Path(output_dir).mkdir(parents=True, exist_ok=True)
-                json_results = get_json_results(results, images, bboxes)
-                with open(json_out_path, "w") as f:
-                    json.dump(json_results, f)
-                    
+    if save_mode == "json":
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
+        json_out_path = os.path.join(output_dir, f"{video_name}.json")
+        with open(json_out_path, "w", encoding='utf-8') as f:
+            json.dump(all_frames_data, f, indent=4)
+        print(f"JSON results saved to: {json_out_path}")
 
 
 if __name__ == "__main__":
     fire.Fire(run)
-    # backend = "onnxruntime"  # opencv, onnxruntime, openvino
-    # openpose_skeleton = False  # True for openpose-style, False for mmpose-style
-    # wholebody = Wholebody(
-    #     to_openpose=openpose_skeleton,
-    #     mode='balanced',  # 'performance', 'lightweight', 'balanced'. Default: 'balanced'
-    #     backend=backend,
-    #     device='cuda',
-    #     )
-    # run_from_json(r"E:\rensh\SignLang\sign_database\missing_videos.json", wholebody_model=wholebody)
-    
