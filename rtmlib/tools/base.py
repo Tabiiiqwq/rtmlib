@@ -8,10 +8,20 @@ import numpy as np
 from .file import download_checkpoint
 def check_mps_support():
     try:
-        import onnxruntime
-        providers = onnxruntime.get_available_providers()
-        return 'MPSExecutionProvider' in providers or 'CoreMLExecutionProvider' in providers
-    except ImportError:
+        import onnxruntime as ort
+        # 尝试获取可用的 providers
+        if hasattr(ort, 'get_available_providers'):
+            try:
+                providers = ort.get_available_providers()
+                return 'MPSExecutionProvider' in providers or 'CoreMLExecutionProvider' in providers
+            except (AttributeError, TypeError, Exception):
+                # 如果调用失败，返回 False
+                return False
+        else:
+            # 如果 get_available_providers 不存在（旧版本），返回 False
+            return False
+    except (ImportError, AttributeError, Exception):
+        # 捕获所有可能的异常，包括模块导入问题
         return False
 
 RTMLIB_SETTINGS = {
@@ -63,7 +73,7 @@ class BaseTool(metaclass=ABCMeta):
             # 'cuda:device_id'
             if (device not in RTMLIB_SETTINGS[backend]) and ("cuda" in device):
                 device_id = int(device.split(":")[-1])
-                providers = ('CUDAExecutionProvider', {'device_id': device_id})
+                providers = 'CUDAExecutionProvider'
             else:
                 providers = RTMLIB_SETTINGS[backend][device]
 
