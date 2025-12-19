@@ -40,12 +40,22 @@ while cap.isOpened():
     cv2.waitKey(10)
 
 '''
+
+from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
 
 from .. import YOLOX, RTMPose
 from .utils.types import BodyResult, Keypoint, PoseResult
+
+_DEFAULT_MODEL_ROOT = Path(
+    __file__).resolve().parents[3] / 'rtmw-x' / 'mmdeploy_output'
+
+
+def _rtmw_model_path(subfolder: str) -> str:
+    """Resolve RTMW model path based on repository-relative location."""
+    return str((_DEFAULT_MODEL_ROOT / subfolder / 'end2end.onnx').resolve())
 
 
 class Wholebody:
@@ -74,7 +84,23 @@ class Wholebody:
             'pose':
             'https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/rtmw-dw-x-l_simcc-cocktail14_270e-256x192_20231122.zip',  # noqa
             'pose_input_size': (192, 256),
-        }
+        },
+        'rtmw-x_256*192': {
+            'det':
+            'https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_m_8xb8-300e_humanart-c2c7a14a.zip',  # noqa
+            'det_input_size': (640, 640),
+            # Use packaged RTMW-X ONNX model
+            'pose': _rtmw_model_path('rtmw-x_256x192'),
+            'pose_input_size': (192, 256),
+        },
+        'rtmw-x_384*288': {
+            'det':
+            'https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_m_8xb8-300e_humanart-c2c7a14a.zip',  # noqa
+            'det_input_size': (640, 640),
+            # Use packaged RTMW-X ONNX model
+            'pose': _rtmw_model_path('rtmw-x_384x288'),
+            'pose_input_size': (288, 384),
+        },
     }
 
     def __init__(self,
