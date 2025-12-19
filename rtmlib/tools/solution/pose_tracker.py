@@ -179,7 +179,7 @@ class PoseTracker:
 
         if self.det_model is not None:
             if self.frame_cnt % self.det_frequency == 0:
-                bboxes = self.det_model(image)
+                bboxes, _ = self.det_model(image)
             else:
                 bboxes = self.bboxes_last_frame
 
@@ -223,8 +223,19 @@ class PoseTracker:
 
             self.track_ids_last_frame = track_ids_current_frame
             # reorder keypoints, scores according to track_id
-            keypoints = np.array([keypoints[i] for i in self.track_ids_last_frame])
-            scores = np.array([scores[i] for i in self.track_ids_last_frame])
+
+            if isinstance(keypoints, list):
+                num_k = len(keypoints)
+            else:
+                num_k = len(keypoints) if keypoints is not None else 0
+            valid_indices = [i for i in self.track_ids_last_frame if 0 <= i < num_k]
+            if len(valid_indices) != len(self.track_ids_last_frame):
+                # 回退到当前帧顺序索引，避免越界
+                valid_indices = list(range(num_k))
+                self.track_ids_last_frame = valid_indices
+                
+            keypoints = np.array([keypoints[i] for i in valid_indices]) if num_k > 0 else np.array([])
+            scores = np.array([scores[i] for i in valid_indices]) if num_k > 0 else np.array([])
 
         self.bboxes_last_frame = bboxes_current_frame
         self.frame_cnt += 1

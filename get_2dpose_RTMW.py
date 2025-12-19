@@ -126,7 +126,7 @@ def get_npy_results(results: List[np.ndarray], images: List[np.ndarray]) -> np.a
 
     npy_results = results[:, 0, :, :]  # (frame, 133, 3)
     npy_results = np.concatenate(
-        [npy_results, video_res_info], axis=1
+        [video_res_info, npy_results], axis=1
     )  # (frame, 134, 3)
     return npy_results
 

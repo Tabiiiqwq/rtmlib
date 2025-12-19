@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模型对比 - 视频并排查看</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1920px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #4CAF50;
+        }
+
+        .controls {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        label {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        select, button {
+            padding: 8px 15px;
+            background: #3a3a3a;
+            color: #e0e0e0;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        select:hover, button:hover {
+            background: #4a4a4a;
+            border-color: #4CAF50;
+        }
+
+        button {
+            background: #4CAF50;
+            border-color: #4CAF50;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        button:disabled {
+            background: #555;
+            border-color: #555;
+            cursor: not-allowed;
+        }
+
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        @media (min-width: 1600px) {
+            .video-grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+
+        @media (min-width: 1200px) and (max-width: 1599px) {
+            .video-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        .video-container {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 15px;
+            position: relative;
+        }
+
+        .video-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #4CAF50;
+            text-align: center;
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+            background: #000;
+        }
+
+        .stats-panel {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-card {
+            background: #3a3a3a;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .playback-controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+            padding: 15px;
+            background: #2a2a2a;
+            border-radius: 8px;
+        }
+
+        .progress-container {
+            flex: 1;
+            max-width: 800px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .progress-bar {
+            flex: 1;
+            height: 8px;
+            background: #3a3a3a;
+            border-radius: 4px;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #4CAF50;
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.1s;
+        }
+
+        .time-display {
+            font-size: 14px;
+            color: #aaa;
+            min-width: 100px;
+            text-align: center;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #4CAF50;
+        }
+
+        .error {
+            background: #d32f2f;
+            color: white;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 模型对比 - 视频并排查看</h1>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="videoSelect">选择视频:</label>
+                <select id="videoSelect">
+                    <option value="">加载中...</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <button id="loadBtn">加载视频</button>
+            </div>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">
+            正在加载视频和统计数据...
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="info" style="background: #1976d2; color: white; padding: 15px; border-radius: 4px; margin: 10px 0; display: none;">
+            <strong>提示:</strong> 如果视频无法播放，可能是编码格式问题。mp4v编码可能不被浏览器支持，建议使用H.264编码重新生成视频。
+        </div>
+
+        <div id="videoGrid" class="video-grid" style="display: none;"></div>
+
+        <div class="playback-controls" id="playbackControls" style="display: none;">
+            <button id="playPauseBtn">▶ 播放</button>
+            <div class="progress-container">
+                <span class="time-display" id="currentTime">00:00</span>
+                <div class="progress-bar" id="progressBar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <span class="time-display" id="totalTime">00:00</span>
+            </div>
+            <button id="syncBtn">🔄 同步</button>
+        </div>
+
+        <div class="stats-panel" id="statsPanel" style="display: none;">
+            <h2 style="margin-bottom: 15px; color: #4CAF50;">📊 统计信息</h2>
+            <div class="stats-grid" id="statsGrid"></div>
+        </div>
+    </div>
+
+    <script>
+        // 所有可能的模型（会自动检测哪些存在）
+        const ALL_MODELS = ['balanced', 'performance', 'rtmx_x_256x192', 'rtmx_x_384x288'];
+        const MODEL_NAMES = {
+            'balanced': 'Balanced',
+            'performance': 'Performance',
+            'rtmx_x_256x192': 'RTMX 256×192',
+            'rtmx_x_384x288': 'RTMX 384×288'
+        };
+
+        let videos = [];
+        let availableModels = [];
+        let statsData = null;
+        let currentVideoName = null;
+        let isPlaying = false;
+        let syncEnabled = true;
+
+        // 加载视频列表
+        async function loadVideoList() {
+            try {
+                // 从已知的视频名称生成列表
+                const videoNames = [
+                    '0000aaed93963048862b3a3fbc942f01',
+                    '0000d600c120f17cf5f96da57549f454',
+                    '0000de84e5c6e9df1985e981e2f27f04',
+                    '00002a3f8f146182dd747f5112e15bf8',
+                    '00005ebdb1217cd975153c009fc4dc57',
+                    '00006f9803f20191bd479175dac893cf',
+                    '0000b3f39b5d991ee850f91e2b3c1d65',
+                    '0000b53226be6ffa8bb42985db15bfd3',
+                    '0000bb418400f1860f8b5e9f0ab56462',
+                    '0000ccb273a287025b6cb194de22be75'
+                ];
+
+                const select = document.getElementById('videoSelect');
+                select.innerHTML = '<option value="">请选择视频</option>';
+                videoNames.forEach(name => {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    option.textContent = name;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                showError('加载视频列表失败: ' + error.message);
+            }
+        }
+
+        // 加载统计数据
+        async function loadStats() {
+            try {
+                const response = await fetch('output_stats/all_results.json');
+                if (!response.ok) throw new Error('无法加载统计数据');
+                statsData = await response.json();
+            } catch (error) {
+                console.warn('无法加载统计数据:', error);
+                statsData = null;
+            }
+        }
+
+        // 检测可用的模型
+        async function detectAvailableModels(videoName) {
+            const available = [];
+            const errors = [];
+            for (const model of ALL_MODELS) {
+                try {
+                    const videoPath = `../output_viz_transformed/${videoName}_${model}.mp4`;
+                    const response = await fetch(videoPath, { method: 'HEAD' });
+                    if (response.ok) {
+                        available.push(model);
+                        console.log(`✓ 找到视频: ${videoPath}`);
+                    } else {
+                        errors.push(`${model}: HTTP ${response.status}`);
+                    }
+                } catch (e) {
+                    errors.push(`${model}: ${e.message}`);
+                }
+            }
+            if (available.length === 0 && errors.length > 0) {
+                console.warn('视频检测错误:', errors);
+            }
+            return available;
+        }
+
+        // 加载视频
+        async function loadVideos(videoName) {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const videoGrid = document.getElementById('videoGrid');
+            const playbackControls = document.getElementById('playbackControls');
+            const statsPanel = document.getElementById('statsPanel');
+
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            videoGrid.style.display = 'none';
+            playbackControls.style.display = 'none';
+            statsPanel.style.display = 'none';
+
+            try {
+                // 先检测可用的模型
+                availableModels = await detectAvailableModels(videoName);
+                if (availableModels.length === 0) {
+                    throw new Error('未找到任何可用的视频文件');
+                }
+
+                videos = [];
+                videoGrid.innerHTML = '';
+
+                for (const model of availableModels) {
+                    const videoPath = `../output_viz_transformed/${videoName}_${model}.mp4`;
+                    console.log(`正在加载视频: ${videoPath}`);
+                    
+                    const video = document.createElement('video');
+                    video.src = videoPath;
+                    video.controls = false;
+                    video.muted = true;
+                    video.playsInline = true;
+                    video.preload = 'metadata';
+                    
+                    // 添加更多调试信息
+                    video.addEventListener('loadstart', () => {
+                        console.log(`开始加载: ${videoPath}`);
+                    });
+                    video.addEventListener('progress', () => {
+                        if (video.buffered.length > 0) {
+                            const buffered = video.buffered.end(0);
+                            const duration = video.duration;
+                            if (duration > 0) {
+                                console.log(`加载进度: ${videoPath} - ${(buffered/duration*100).toFixed(1)}%`);
+                            }
+                        }
+                    });
+
+                    const container = document.createElement('div');
+                    container.className = 'video-container';
+                    
+                    const title = document.createElement('div');
+                    title.className = 'video-title';
+                    title.textContent = MODEL_NAMES[model] || model;
+                    
+                    container.appendChild(title);
+                    container.appendChild(video);
+                    videoGrid.appendChild(container);
+
+                    videos.push(video);
+
+                    // 等待视频加载 - 使用更宽松的策略
+                    await new Promise((resolve, reject) => {
+                        let resolved = false;
+                        const timeout = setTimeout(() => {
+                            if (!resolved) {
+                                resolved = true;
+                                console.error(`加载超时: ${videoPath}`);
+                                // 即使超时，如果视频已经可以播放，也继续
+                                if (video.readyState >= 2) { // HAVE_CURRENT_DATA
+                                    console.log(`超时但视频已加载部分数据，继续: ${videoPath}`);
+                                    resolve();
+                                } else {
+                                    reject(new Error(`加载 ${model} 模型视频超时 (${videoPath})`));
+                                }
+                            }
+                        }, 20000); // 增加到20秒
+                        
+                        const tryResolve = () => {
+                            if (!resolved && video.readyState >= 2) {
+                                resolved = true;
+                                clearTimeout(timeout);
+                                console.log(`✓ 视频加载成功: ${videoPath} (readyState: ${video.readyState})`);
+                                resolve();
+                            }
+                        };
+                        
+                        video.onloadedmetadata = () => {
+                            console.log(`元数据加载完成: ${videoPath}, duration: ${video.duration}`);
+                            tryResolve();
+                        };
+                        
+                        video.onloadeddata = () => {
+                            console.log(`数据加载完成: ${videoPath}`);
+                            tryResolve();
+                        };
+                        
+                        video.oncanplay = () => {
+                            console.log(`可以播放: ${videoPath}`);
+                            tryResolve();
+                        };
+                        
+                        video.oncanplaythrough = () => {
+                            console.log(`可以流畅播放: ${videoPath}`);
+                            tryResolve();
+                        };
+                        
+                        video.onerror = (e) => {
+                            if (!resolved) {
+                                resolved = true;
+                                clearTimeout(timeout);
+                                const errorMsg = video.error ? 
+                                    `错误代码 ${video.error.code}: ${getVideoError(video.error.code)}` : 
+                                    '未知错误';
+                                console.error(`视频加载失败: ${videoPath}`, errorMsg, video.error);
+                                reject(new Error(`无法加载 ${model} 模型视频: ${errorMsg} (${videoPath})`));
+                            }
+                        };
+                        
+                        // 开始加载
+                        video.load();
+                        
+                        // 如果视频已经可以播放，立即resolve
+                        setTimeout(() => {
+                            if (!resolved && video.readyState >= 2) {
+                                tryResolve();
+                            }
+                        }, 1000);
+                    });
+                }
+
+                // 设置同步播放
+                setupSyncPlayback();
+
+                loading.style.display = 'none';
+                videoGrid.style.display = 'grid';
+                playbackControls.style.display = 'flex';
+                statsPanel.style.display = 'block';
+
+                currentVideoName = videoName;
+                updateStats(videoName);
+                updateTimeDisplay();
+
+            } catch (err) {
+                loading.style.display = 'none';
+                showError('加载视频失败: ' + err.message);
+                // 显示编码提示
+                document.getElementById('info').style.display = 'block';
+            }
+        }
+
+        // 设置同步播放
+        function setupSyncPlayback() {
+            videos.forEach(video => {
+                video.addEventListener('play', () => {
+                    if (syncEnabled) {
+                        videos.forEach(v => {
+                            if (v !== video && v.paused) {
+                                v.currentTime = video.currentTime;
+                                v.play();
+                            }
+                        });
+                    }
+                });
+
+                video.addEventListener('pause', () => {
+                    if (syncEnabled) {
+                        videos.forEach(v => {
+                            if (!v.paused) {
+                                v.pause();
+                            }
+                        });
+                    }
+                });
+
+                video.addEventListener('seeked', () => {
+                    if (syncEnabled && !video.paused) {
+                        videos.forEach(v => {
+                            if (v !== video) {
+                                v.currentTime = video.currentTime;
+                            }
+                        });
+                    }
+                });
+
+                video.addEventListener('timeupdate', () => {
+                    if (syncEnabled && video === videos[0]) {
+                        updateProgress();
+                    }
+                });
+            });
+        }
+
+        // 播放/暂停控制
+        function togglePlayPause() {
+            if (videos.length === 0) return;
+
+            if (isPlaying) {
+                videos.forEach(v => v.pause());
+                isPlaying = false;
+                document.getElementById('playPauseBtn').textContent = '▶ 播放';
+            } else {
+                videos.forEach(v => v.play());
+                isPlaying = true;
+                document.getElementById('playPauseBtn').textContent = '⏸ 暂停';
+            }
+        }
+
+        // 同步所有视频
+        function syncVideos() {
+            if (videos.length === 0) return;
+            const masterTime = videos[0].currentTime;
+            videos.forEach(v => {
+                v.currentTime = masterTime;
+            });
+        }
+
+        // 更新进度条
+        function updateProgress() {
+            if (videos.length === 0) return;
+            const video = videos[0];
+            const progress = (video.currentTime / video.duration) * 100;
+            document.getElementById('progressFill').style.width = progress + '%';
+            updateTimeDisplay();
+        }
+
+        // 更新时间显示
+        function updateTimeDisplay() {
+            if (videos.length === 0) return;
+            const video = videos[0];
+            document.getElementById('currentTime').textContent = formatTime(video.currentTime);
+            document.getElementById('totalTime').textContent = formatTime(video.duration);
+        }
+
+        // 格式化时间
+        function formatTime(seconds) {
+            if (isNaN(seconds)) return '00:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // 进度条点击
+        function seekTo(event) {
+            if (videos.length === 0) return;
+            const progressBar = document.getElementById('progressBar');
+            const rect = progressBar.getBoundingClientRect();
+            const percent = (event.clientX - rect.left) / rect.width;
+            const time = percent * videos[0].duration;
+            videos.forEach(v => {
+                v.currentTime = time;
+            });
+        }
+
+        // 更新统计信息
+        function updateStats(videoName) {
+            if (!statsData) return;
+
+            const statsGrid = document.getElementById('statsGrid');
+            statsGrid.innerHTML = '';
+
+            availableModels.forEach(model => {
+                // 尝试匹配不同的模式名称格式
+                let modelStats = statsData.find(s => 
+                    s.video_name === videoName && s.mode === model
+                );
+                
+                // 如果找不到，尝试匹配原始模式名称（带*的）
+                if (!modelStats) {
+                    const originalModel = model.replace('_', '-').replace('x', '*');
+                    modelStats = statsData.find(s => 
+                        s.video_name === videoName && s.mode === originalModel
+                    );
+                }
+
+                if (!modelStats) return;
+
+                const card = document.createElement('div');
+                card.className = 'stat-card';
+                card.innerHTML = `
+                    <div class="stat-label">${MODEL_NAMES[model] || model}</div>
+                    <div class="stat-value" style="margin-top: 10px;">
+                        <div style="font-size: 14px; margin-bottom: 5px;">
+                            FPS: ${modelStats.avg_fps.toFixed(2)}
+                        </div>
+                        <div style="font-size: 14px; margin-bottom: 5px;">
+                            推理时间: ${(modelStats.avg_inference_time * 1000).toFixed(1)}ms
+                        </div>
+                        <div style="font-size: 12px; color: #aaa; margin-top: 8px;">
+                            关键点分数: ${modelStats.kpt_scores.mean.toFixed(3)} ± ${modelStats.kpt_scores.std.toFixed(3)}
+                        </div>
+                        <div style="font-size: 12px; color: #aaa;">
+                            范围: [${modelStats.kpt_scores.min.toFixed(3)}, ${modelStats.kpt_scores.max.toFixed(3)}]
+                        </div>
+                        ${modelStats.bbox_scores ? `
+                        <div style="font-size: 12px; color: #aaa; margin-top: 5px;">
+                            检测分数: ${modelStats.bbox_scores.mean.toFixed(3)}
+                        </div>
+                        ` : ''}
+                        <div style="font-size: 12px; color: #aaa; margin-top: 5px;">
+                            平均人数: ${modelStats.num_people.mean.toFixed(1)}
+                        </div>
+                    </div>
+                `;
+                statsGrid.appendChild(card);
+            });
+        }
+
+        // 获取视频错误信息
+        function getVideoError(code) {
+            const errors = {
+                1: 'MEDIA_ERR_ABORTED - 用户中止',
+                2: 'MEDIA_ERR_NETWORK - 网络错误',
+                3: 'MEDIA_ERR_DECODE - 解码错误',
+                4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - 格式不支持'
+            };
+            return errors[code] || `错误代码 ${code}`;
+        }
+
+        // 显示错误
+        function showError(message) {
+            const error = document.getElementById('error');
+            error.textContent = message;
+            error.style.display = 'block';
+            console.error('错误:', message);
+        }
+
+        // 事件监听
+        document.getElementById('loadBtn').addEventListener('click', () => {
+            const videoName = document.getElementById('videoSelect').value;
+            if (videoName) {
+                loadVideos(videoName);
+            } else {
+                showError('请先选择视频');
+            }
+        });
+
+        document.getElementById('playPauseBtn').addEventListener('click', togglePlayPause);
+        document.getElementById('syncBtn').addEventListener('click', syncVideos);
+        document.getElementById('progressBar').addEventListener('click', seekTo);
+
+        // 初始化
+        loadVideoList();
+        loadStats();
+    </script>
+</body>
+</html>
+
